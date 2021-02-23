@@ -30,6 +30,10 @@ echo ${all_parameter[*]} | grep -qE "deviceId@[0-9]+" && deviceId=$(echo ${all_p
 ## 1GB全国流量月包：  ff80808165afd2960165cdbc92470bef
 #####
 
+# 使用Github Action运行时需要传入参数来修改工作路径: githubaction
+workdirbase="/var/log/CnUnicom"
+echo ${all_parameter[*]} | grep -qE "githubaction" && workdirbase="$(pwd)/CnUnicom"
+
 # 联通APP版本
 unicom_version=8.0100
 
@@ -37,7 +41,7 @@ unicom_version=8.0100
 UA="Mozilla/5.0 (Linux; Android 6.0.1; oneplus a5010 Build/V417IR; wv) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/52.0.2743.100 Mobile Safari/537.36; unicom{version:android@$unicom_version,desmobile:$username};devicetype{deviceBrand:Oneplus,deviceModel:oneplus a5010}"
 
 # alias curl
-alias curl='curl -m 10'
+alias curl='curl --connect-timeout 10 -m 20'
 
 ################################################################
 function rsaencrypt() {
@@ -88,17 +92,19 @@ isRemberPwd=true
 EOF
 
     # cookie登录
-    curl -X POST -sA "$UA" -b $workdir/cookie -c $workdir/cookie "https://m.client.10010.com/mobileService/customer/query/getMyUnicomDateTotle.htm?yw_code=&mobile=$username&version=android%40$unicom_version" | grep -oE "infoDetail" >/dev/null && status=0 || status=1
-    [[ $status == 0 ]] && echo && echo $(date) cookies登录${username:0:2}****${username:9}成功
+    data="deviceId=$deviceId&netWay=Wifi&reqtime=$(date +%s)$(shuf -i 100-999 -n 1)&flushkey=1&version=android%40${unicom_version}&deviceModel=oneplus%20a5010&token_online=$(cat $workdir/token_online | grep -oE "token_online\":\"[^\"]*" | cut -f3 -d\")&appId=$appId&deviceBrand=Oneplus&deviceCode=$deviceId"
+    curl -X POST -sA "$UA" -b $workdir/cookie -c $workdir/cookie --data "$data" https://m.client.10010.com/mobileService/onLine.htm >$workdir/token_online
+    cat $workdir/token_online | grep -qE "token_online" && status=0 || status=1
+    [[ $status == 0 ]] && echo && echo $(date) cookies登录${username:0:2}******${username:8}成功
     
     # 账号密码登录
     if [[ $status == 1 ]]; then
-        rm -rf $workdir/cookie
+        rm -rf $workdir/cookie*
         curl -X POST -sA "$UA" -c $workdir/cookie "https://m.client.10010.com/mobileService/logout.htm?&desmobile=$username&version=android%40$unicom_version" >/dev/null
-        curl -sA "$UA" -b $workdir/cookie -c $workdir/cookie -d @$workdir/signdata "https://m.client.10010.com/mobileService/login.htm" >/dev/null
+        curl -sA "$UA" -b $workdir/cookie -c $workdir/cookie -d @$workdir/signdata "https://m.client.10010.com/mobileService/login.htm" >$workdir/token_online
         token=$(cat $workdir/cookie | grep -E "a_token" | awk  '{print $7}')
-        [[ "$token" = "" ]] && echo && echo $(date) ${username:0:2}****${username:9} Login Failed. && rm -rf $workdir && return 1
-        echo && echo $(date) 密码登录${username:0:2}****${username:9}成功
+        [[ "$token" = "" ]] && echo && echo $(date) ${username:0:2}******${username:8} Login Failed. && rm -rf $workdir && return 1
+        echo && echo $(date) 密码登录${username:0:2}******${username:8}成功
     fi
 }
 
@@ -113,13 +119,13 @@ function membercenter() {
     Referer="https://img.client.10010.com/kuaibao/detail.html?pageFrom=${NewsListId[0]}"
    
     # 评论点赞后取消点赞
-    for ((i = 0; i < ${#comtId[*]}; i++)); do
+    for ((i = 0; i <= 5; i++)); do
         curl -X POST -sA "$UA" -b $workdir/cookie --data "pointChannel=02&pointType=02&reqChannel=quickNews&reqId=${comtId[i]}&praisedMobile=${nickId[i]}&newsId=${NewsListId[0]}" -e "$Referer" https://m.client.10010.com/commentSystem/csPraise
         curl -X POST -sA "$UA" -b $workdir/cookie --data "pointChannel=02&pointType=01&reqChannel=quickNews&reqId=${comtId[i]}&praisedMobile=${nickId[i]}&newsId=${NewsListId[0]}" -e "$Referer" https://m.client.10010.com/commentSystem/csPraise | grep -oE "growScore\":\"0\"" >/dev/null && break
     done
     
     # 文章点赞后取消点赞
-    for ((i = 0; i <= ${#NewsListId[*]}; i++)); do
+    for ((i = 0; i <= 5; i++)); do
         curl -X POST -sA "$UA" -b $workdir/cookie --data "pointChannel=01&pointType=02&reqChannel=quickNews&reqId=${NewsListId[i]}" https://m.client.10010.com/commentSystem/csPraise
         curl -X POST -sA "$UA" -b $workdir/cookie --data "pointChannel=01&pointType=01&reqChannel=quickNews&reqId=${NewsListId[i]}" https://m.client.10010.com/commentSystem/csPraise | grep -oE "growScore\":\"0\"" >/dev/null && break
     done
@@ -134,65 +140,56 @@ function membercenter() {
     done
     
     # 每月一次账单查询
-    if [[ "$(date "+%d")" == "01" ]]; then
-        curl -sLA "$UA" -b $workdir/cookie -c $workdir/cookie.HistoryBill --data "yw_code=&desmobile=$username&version=android@$unicom_version" "https://m.client.10010.com/mobileService/common/skip/queryHistoryBill.htm?mobile_c_from=home" >/dev/null
-        curl -sLA "$UA" -b $workdir/cookie.HistoryBill --data "operateType=0&bizCode=1000210003&height=889&width=480" "https://m.client.10010.com/mobileService/query/querySmartBizNew.htm?" >/dev/null
-        curl -sLA "$UA" -b $workdir/cookie.HistoryBill --data "systemCode=CLIENT&transId=&userNumber=$username&taskCode=TA52554375&finishTime=$(date +%Y%m%d%H%M%S)" "https://act.10010.com/signinAppH/limitTask/limitTime" >/dev/null
+    if [[ "$(date "+%d")" == "05" ]]; then
+        curl -sLA "$UA" -b $workdir/cookie --data "yw_code=&desmobile=$username&version=android@$unicom_version" "https://m.client.10010.com/mobileService/common/skip/queryHistoryBill.htm?mobile_c_from=home" >/dev/null
+        curl -sLA "$UA" -b $workdir/cookie --data "systemCode=CLIENT&transId=&userNumber=$username&taskCode=TA52554375&finishTime=$(date +%Y%m%d%H%M%S)" "https://act.10010.com/signinAppH/limitTask/limitTime" >/dev/null
     fi
 
     # 每日一次余量查询
-    curl -sLA "$UA" -b $workdir/cookie -c $workdir/cookie.LeavePackage --data "desmobile=$username&version=android@$unicom_version" "https://m.client.10010.com/mobileService/common/skip/queryLeavePackage.htm" >/dev/null
-    curl -sLA "$UA" -b $workdir/cookie.LeavePackage --data "operateType=0&bizCode=1000210026&height=776&width=480" "https://m.client.10010.com/mobileService/query/querySmartBizNew.htm?" >/dev/null
-    curl -sLA "$UA" -b $workdir/cookie.LeavePackage --data "type=0" "https://m.client.10010.com/mobileService/grow/marginCheck.htm"
+    curl -sLA "$UA" -b $workdir/cookie --data "desmobile=$username&version=android@$unicom_version" "https://m.client.10010.com/mobileService/common/skip/queryLeavePackage.htm" >/dev/null
+    curl -sLA "$UA" -b $workdir/cookie --data "type=0" "https://m.client.10010.com/mobileService/grow/marginCheck.htm"
     
     # 签到
-    Referer="https://img.client.10010.com/activitys/member/index.html"
-    data="yw_code=&desmobile=$username&version=android@$unicom_version"
-    curl -sLA "$UA" -b $workdir/cookie -c $workdir/cookie.SigninActivity -e "$Referer" "https://act.10010.com/SigninApp/signin/querySigninActivity.htm?$data" >/dev/null
-    Referer="https://act.10010.com/SigninApp/signin/querySigninActivity.htm?$data"
-    curl -X POST -sA "$UA" -b $workdir/cookie.SigninActivity -e "$Referer" "https://act.10010.com/SigninApp/signin/daySign?vesion=0.$(shuf -i 1234567890123456-9876543210654321 -n 1)"
+    Referer="https://act.10010.com/SigninApp/signin/querySigninActivity.htm?yw_code=&desmobile=$username&version=android@$unicom_version"
+    curl -X POST -sA "$UA" -b $workdir/cookie -e "$Referer" "https://act.10010.com/SigninApp/signin/daySign?vesion=0.$(shuf -i 1234567890123456-9876543210654321 -n 1)"
     echo
-    curl -X POST -sA "$UA" -b $workdir/cookie.SigninActivity -e "$Referer" "https://act.10010.com/SigninApp/signin/todaySign"
+    curl -X POST -sA "$UA" -b $workdir/cookie -e "$Referer" "https://act.10010.com/SigninApp/signin/todaySign"
     echo
-    curl -X POST -sA "$UA" -b $workdir/cookie.SigninActivity -e "$Referer" "https://act.10010.com/SigninApp/signin/addIntegralDA"
-
-    curl -X POST -sA "$UA" -b $workdir/cookie.SigninActivity -e "$Referer" "https://act.10010.com/SigninApp/signin/getContinuous"
-    curl -X POST -sA "$UA" -b $workdir/cookie.SigninActivity -e "$Referer" "https://act.10010.com/SigninApp/signin/getIntegral"
-    curl -X POST -sA "$UA" -b $workdir/cookie.SigninActivity -e "$Referer" "https://act.10010.com/SigninApp/signin/getGoldTotal"
-
-    curl -X POST -sA "$UA" -b $workdir/cookie.SigninActivity -e "$Referer" "https://act.10010.com/SigninApp/signin/bannerAdPlayingLogo"
+    curl -X POST -sA "$UA" -b $workdir/cookie -e "$Referer" "https://act.10010.com/SigninApp/signin/addIntegralDA"
+    curl -X POST -sA "$UA" -b $workdir/cookie -e "$Referer" "https://act.10010.com/SigninApp/signin/bannerAdPlayingLogo"
     
     # 三次金币抽奖， 每日最多可花费金币执行十三次
-    usernumberofjsp=$(curl -sA "$UA" -b $workdir/cookie.SigninActivity https://m.client.10010.com/dailylottery/static/textdl/userLogin | grep -oE "encryptmobile=\w*" | awk -F"encryptmobile=" '{print $2}'| head -n1)
+    usernumberofjsp=$(curl -sA "$UA" -b $workdir/cookie https://m.client.10010.com/dailylottery/static/textdl/userLogin | grep -oE "encryptmobile=\w*" | awk -F"encryptmobile=" '{print $2}'| head -n1)
     for ((i = 1; i <= 3; i++)); do
-        [[ $i -gt 3 ]] && curl -sA "$UA" -b $workdir/cookie.SigninActivity --data "goldnumber=10&banrate=10&usernumberofjsp=$usernumberofjsp" https://m.client.10010.com/dailylottery/static/doubleball/duihuan >/dev/null; sleep 1
-        curl -sA "$UA" -b $workdir/cookie.SigninActivity --data "usernumberofjsp=$usernumberofjsp&flag=convert" https://m.client.10010.com/dailylottery/static/doubleball/choujiang | grep -qE "用户机会次数不足" && break
+        [[ $i -gt 3 ]] && curl -sA "$UA" -b $workdir/cookie --data "goldnumber=10&banrate=10&usernumberofjsp=$usernumberofjsp" https://m.client.10010.com/dailylottery/static/doubleball/duihuan >/dev/null; sleep 1
+        curl -sA "$UA" -b $workdir/cookie --data "usernumberofjsp=$usernumberofjsp&flag=convert" https://m.client.10010.com/dailylottery/static/doubleball/choujiang | grep -qE "用户机会次数不足" && break
     done
-    echo; echo goldTotal：$(curl -X POST -sA "$UA" -b $workdir/cookie.SigninActivity -e "$Referer" "https://act.10010.com/SigninApp/signin/getGoldTotal?vesion=0.$(shuf -i 1234567890123456-9876543210654321 -n 1)")
+    echo; echo goldTotal：$(curl -X POST -sA "$UA" -b $workdir/cookie -e "$Referer" "https://act.10010.com/SigninApp/signin/getGoldTotal?vesion=0.$(shuf -i 1234567890123456-9876543210654321 -n 1)")
     
     # 积分抽奖首次免费，之后领300定向积分兑换再抽奖,最多三十次
-    curl -sLA "$UA" -b $workdir/cookie "https://m.client.10010.com/welfare-mall-front/mobile/winter/getpoints/v1"
-    curl -X POST -sLA "$UA" -b $workdir/cookie --data "from=$(shuf -i 12345678901-98765432101 -n 1)" "https://m.client.10010.com/welfare-mall-front/mobile/winterTwo/getIntegral/v1"
-    curl -X POST -sA "$UA" -b $workdir/cookie.SigninActivity --data "usernumberofjsp=$usernumberofjsp&flag=convert" http://m.client.10010.com/dailylottery/static/integral/choujiang
-    for ((i = 1; i <= 15; i++)); do
-        curl -sA "$UA" -b $workdir/cookie.SigninActivity --data "goldnumber=10&banrate=30&usernumberofjsp=$usernumberofjsp" http://m.client.10010.com/dailylottery/static/integral/duihuan >/dev/null; sleep 1
-        curl -X POST -sA "$UA" -b $workdir/cookie.SigninActivity --data "usernumberofjsp=$usernumberofjsp&flag=convert" http://m.client.10010.com/dailylottery/static/integral/choujiang | grep -qE "用户机会次数不足" && break
+    echo; curl -X POST -sLA "$UA" -b $workdir/cookie --data "from=$(shuf -i 12345678901-98765432101 -n 1)" "https://m.client.10010.com/welfare-mall-front/mobile/winterTwo/getIntegral/v1"
+    echo; curl -X POST -sA "$UA" -b $workdir/cookie --data "usernumberofjsp=$usernumberofjsp&flag=convert" http://m.client.10010.com/dailylottery/static/integral/choujiang
+    for ((i = 1; i <= 3; i++)); do
+        curl -sA "$UA" -b $workdir/cookie --data "goldnumber=10&banrate=30&usernumberofjsp=$usernumberofjsp" http://m.client.10010.com/dailylottery/static/integral/duihuan >/dev/null; sleep 1
+        curl -X POST -sA "$UA" -b $workdir/cookie --data "usernumberofjsp=$usernumberofjsp&flag=convert" http://m.client.10010.com/dailylottery/static/integral/choujiang | grep -qE "用户机会次数不足" && break
     done
     
     # 每日领100定向积分
     echo; curl -X POST -sA "$UA" -b $workdir/cookie --data "from=$(shuf -i 12345678901-98765432101 -n 1)" https://m.client.10010.com/welfare-mall-front/mobile/integral/gettheintegral/v1
     
     # 游戏签到积分 每日1积分
-    curl -X POST -sA "$UA" -b $workdir/cookie.SigninActivity --data "methodType=iOSIntegralGet&gameLevel=1&deviceType=iOS" "https://m.client.10010.com/producGameApp"
+    echo; curl -X POST -sA "$UA" -b $workdir/cookie --data "methodType=iOSIntegralGet&gameLevel=1&deviceType=iOS" "https://m.client.10010.com/producGameApp"
     
     # 奖励积分
-    echo; curl -X POST -sA "$UA" -b $workdir/cookie.SigninActivity --data "methodType=signin" https://m.client.10010.com/producGame_signin
+    echo; curl -X POST -sA "$UA" -b $workdir/cookie --data "methodType=signin" https://m.client.10010.com/producGame_signin
     
     # 游戏宝箱
-    curl -X POST -sA "$UA"  -b $workdir/cookie.SigninActivity -c $workdir/cookie.xybx --data "thirdUrl=https%3A%2F%2Fimg.client.10010.com%2Fshouyeyouxi%2Findex.html%23%2Fyouxibaoxiang" https://m.client.10010.com/mobileService/customer/getShareRedisInfo.htm >/dev/null
-    echo; curl -X POST -sA "$UA" -b $workdir/cookie.xybx --data "methodType=reward&deviceType=Android&clientVersion=$unicom_version&isVideo=N" https://m.client.10010.com/game_box
-    echo; curl -sA "$UA" -b $workdir/cookie.xybx --data "methodType=taskGetReward&taskCenterId=187&clientVersion=$unicom_version&deviceType=Android" https://m.client.10010.com/producGameTaskCenter
-    echo; curl -X POST -sA "$UA" -b $workdir/cookie.xybx --data "methodType=reward&deviceType=Android&clientVersion=$unicom_version&isVideo=Y" https://m.client.10010.com/game_box
+    echo; curl -X POST -sA "$UA" -b $workdir/cookie --data "methodType=reward&deviceType=Android&clientVersion=$unicom_version&isVideo=N" https://m.client.10010.com/game_box
+    echo; curl -sA "$UA" -b $workdir/cookie --data "methodType=taskGetReward&taskCenterId=187&clientVersion=$unicom_version&deviceType=Android" https://m.client.10010.com/producGameTaskCenter
+    echo; curl -X POST -sA "$UA" -b $workdir/cookie --data "methodType=reward&deviceType=Android&clientVersion=$unicom_version&isVideo=Y" https://m.client.10010.com/game_box
+    
+    # 沃之树浇水，免费一次，服务器经常502错误，所以请求三次
+    for ((i = 1; i <= 3; i++)); do curl -X POST -sA "$UA" -b $workdir/cookie -e "https://img.client.10010.com/mactivity/woTree/index.html" https://m.client.10010.com/mactivity/arbordayJson/arbor/3/0/3/grow.htm | grep -oE "addedValue\":[0-9]" && break; done
     
     # 获得流量
     for ((i = 1; i <= 3; i++)); do
@@ -208,8 +205,15 @@ function tgbotinfo() {
     # TG_BOT通知消息: 未设置相应传入参数时不执行,传入参数格式 token@*** chat_id@*** | 参考: https://github.com/LXK9301/jd_scripts/blob/master/backUp/TG_PUSH.md
     echo ${all_parameter[*]} | grep -qE "token@[a-zA-Z0-9:_-]+" && token="$(echo ${all_parameter[*]} | grep -oE "token@[a-zA-Z0-9:_-]+" | cut -f2 -d@)" || return 0
     echo ${all_parameter[*]} | grep -qE "chat_id@[0-9-]+" && chat_id="$(echo ${all_parameter[*]} | grep -oE "chat_id@[0-9-]+" | cut -f2 -d@)" || return 0
-    text="$(echo ${userlogin_err[*]} ${#userlogin_err[*]} Failed. ${userlogin_ook[*]} ${#userlogin_ook[*]} Accomplished.)"
-    curl -sX POST "https://api.telegram.org/bot$token/sendMessage" -d "chat_id=$chat_id&text=$text" >/dev/null
+    # 登录状态
+    text="$(echo ${userlogin_err[u]} ${#userlogin_err[*]} Failed. ${userlogin_ook[u]} ${#userlogin_ook[*]} Accomplished.)"
+    curl -sX POST "https://api.telegram.org/bot$token/sendMessage" -d "chat_id=$chat_id&text=$text" >/dev/null; sleep 3
+    # 积分信息
+    text="$(echo $(echo ${username:0:2}******${username:8}) 总积分:$total 本月将过期积分:$invalid 可用积分:$canUse 奖励积分:$availablescore 本月将过期奖励积分:$invalidscore 本月新增奖励积分:$addScore 昨日奖励积分:$yesterdayscore 今日奖励积分:$todayscore)"
+    curl -sX POST "https://api.telegram.org/bot$token/sendMessage" -d "chat_id=$chat_id&text=$text" >/dev/null; sleep 3
+    # otherinfo
+    text="$(cat $workdir/otherinfo.info)"
+    curl -sX POST "https://api.telegram.org/bot$token/sendMessage" -d "chat_id=$chat_id&text=$text" >/dev/null; sleep 3
 }
 
 function liulactive() {
@@ -230,7 +234,7 @@ function liulactive() {
     [[ $choosenos == "" ]] && liulactive_only=true
     [[ "$liulactive_only" == "true" ]] || return 0
     # 激活请求
-    echo; echo $(date) liulactive..
+    echo; echo starting liulactive...
     curl -sA "$UA" -b $workdir/cookie -c $workdir/cookie_liulactive "https://m.client.10010.com/MyAccount/trafficController/myAccount.htm?flag=1&cUrl=https://m.client.10010.com/myPrizeForActivity/querywinninglist.htm?pageSign=1" >$workdir/liulactive.log
     liulactiveuserLogin="$(cat $workdir/liulactive.log | grep "refreshAccountTime" | grep -oE "[0-9_]+")"
     curl -sA "$UA" -b $workdir/cookie_liulactive -c $workdir/cookie_liulactive "https://m.client.10010.com/MyAccount/MyGiftBagController/refreshAccountTime.htm?userLogin=$liulactiveuserLogin&accountType=FLOW" >/dev/null
@@ -239,41 +243,87 @@ function liulactive() {
     curl -X POST -sA "$UA" -e "$Referer" -b $workdir/cookie_liulactive -c $workdir/cookie_liulactive --data "productId=$productId&userLogin=$liulactiveuserLogin&ebCount=1000000&pageFrom=4" "https://m.client.10010.com/MyAccount/exchangeDFlow/exchange.htm?userLogin=$liulactiveuserLogin" | grep -B 1 "正在为您激活"
 }
 
-function niujieactive() {
-    # 牛节活动2.1-2.18，需要传入参数niujieactive开启
-    echo ${all_parameter[*]} | grep -qE "niujieactive" || return 0
-    # cookie_niujie
-    rm -rf $workdir/cookie_niujie
-    curl -sLA "$UA" -e "$Referer" -b $workdir/cookie -c $workdir/cookie_niujie "https://u.10010.cn/qA7nJ?yw_code=&desmobile=${username}&version=android@${unicom_version}" >/dev/null
-    Referer="https://img.client.10010.com/2021springfestival/index.html"
-    curl -X POST -sA "$UA" -e "$Referer" -b $workdir/cookie_niujie -c $workdir/cookie_niujie "https://m.client.10010.com/Niujie/calf/CalfFirstPage?click=1" >$workdir/niujie.log
-    # 每日一次任务
-    taskIds=($(curl -X POST -sA "$UA" -e "$Referer" -b $workdir/cookie_niujie "https://m.client.10010.com/Niujie/task/getTaskList" | grep -oE "taskId[^,]+" | cut -f3 -d'"' | tr "\n" " "))
-    for taskId in ${taskIds[*]}; do
-        sleep 1 && curl -X POST -sA "$UA" -b $workdir/cookie_niujie --data "taskId=$taskId" "https://m.client.10010.com/Niujie/task/doTask" | grep -oE "任务已完成" && break
+function hfgoactive() {
+    # 话费购活动，需传入参数 hfgoactive
+    echo ${all_parameter[*]} | grep -qE "hfgoactive" || return 0
+    echo; echo starting hfgoactive...
+    curl -sLA "$UA" -b $workdir/cookie -c $workdir/cookie_hfgo "https://m.client.10010.com/mobileService/openPlatform/openPlatLineNew.htm?to_url=https://account.bol.wo.cn/cuuser/open/openLogin/hfgo&yw_code=&desmobile=${username}&version=android@${unicom_version}" >/dev/null
+    # 抽奖,每日免费3次,签到七天获得额外3次
+    ACTID="$(curl -X POST -sA "$UA" -b $workdir/cookie_hfgo --data "positionType=1" https://hfgo.wo.cn/hfgoapi/product/ad/list | grep -oE "atplottery[^?]*" | cut -f2 -d/)"
+    curl -sLA "$UA" -b $workdir/cookie_hfgo -c $workdir/cookie_hfgo "https://hfgo.wo.cn/hfgoapi/cuuser/auth/autoLogin?redirectUrl=https://atp.bol.wo.cn/atplottery/${ACTID}?product=hfgo&ch=002&$(cat $workdir/cookie_hfgo | grep -oE "[^_]token.*" | sed s/[[:space:]]//g | sed "s/token/Authorization=/")" >/dev/null
+    for ((i = 1; i <= 7; i++)); do
+        echo
+        curl -sA "$UA"  -b $workdir/cookie_hfgo "https://atp.bol.wo.cn/atpapi/act/lottery/start/v1/actPath/${ACTID}/0" >$workdir/lottery_hfgo.log
+        cat $workdir/lottery_hfgo.log
+        cat $workdir/lottery_hfgo.log | grep -qE "抽奖次数已用完" && break
     done
-    # 每小时可以收集各场馆1000牛气
-    shops=($(cat $workdir/niujie.log | grep -oE "[a-zA-Z]+ShopVenue\":\"1000" | grep -oE "[a-zA-Z]+" | tr "\n" " "))
-    for shop in ${shops[*]}; do
-        sleep 1 && echo geting $shop status: $(curl -sA "$UA" -e "$Referer" -b $workdir/cookie_niujie "https://m.client.10010.com/Niujie/calf/receiveCalf?shop=$shop" | grep -oE "message[^,]+")
-    done  
+    # 签到
+    echo; curl -sA "$UA"  -b $workdir/cookie_hfgo https://atp.bol.wo.cn/atpapi/act/actUserSign/everydaySign?actId=1516
+}
+
+function jifeninfo() {
+    # 积分信息显示，需传入参数 jifeninfo
+    echo ${all_parameter[*]} | grep -qE "jifeninfo" || return 0
+    echo; echo starting jifeninfo...
+    curl -X POST -sA "$UA" -b $workdir/cookie --data "reqsn=&reqtime=&cliver=&reqdata=" "https://m.client.10010.com/welfare-mall-front/mobile/show/queryUserTotalScore/v1" >$workdir/jifeninfo.log1 
+    curl -X POST -sA "$UA" -b $workdir/cookie --data "reqsn=&reqtime=&cliver=&reqdata=" "https://m.client.10010.com/welfare-mall-front/mobile/show/flDetail/v1/0" >$workdir/jifeninfo.log2
+    #
+    unset total invalid canUse availablescore invalidscore addScore todayscore yesterdayscore
+    total=$(cat $workdir/jifeninfo.log1 | grep -oE "total\":[0-9]+" | grep -oE "[0-9]+")
+    invalid=$(cat $workdir/jifeninfo.log1 | grep -oE "invalid\":[0-9]+" | grep -oE "[0-9]+")
+    canUse=$(cat $workdir/jifeninfo.log1 | grep -oE "canUse\":[0-9]+" | grep -oE "[0-9]+")
+    #
+    availablescore=$(cat $workdir/jifeninfo.log2 | grep -oE "availablescore\":\"[0-9]+" | grep -oE "[0-9]+")
+    invalidscore=$(cat $workdir/jifeninfo.log2 | grep -oE "invalidscore\":\"[0-9]+" | grep -oE "[0-9]+")
+    addScore=$(cat $workdir/jifeninfo.log2 | grep -oE "addScore\":\"[0-9]+" | grep -oE "[0-9]+")
+    # 今日奖励积分
+    today="$(date +%Y-%m-%d)" && todayscore=0
+    todayscorelist=($(cat $workdir/jifeninfo.log2 | grep -oE "createTime\":\"$today[^}]*" | grep -oE "books_number\":[0-9]+" | grep -oE "[0-9]+" | tr "\n" " "))
+    for ((i = 0; i < ${#todayscorelist[*]}; i++)); do todayscore=$((todayscore+todayscorelist[i])); done
+    # 昨日奖励积分
+    yesterday="$(date -d "1 days ago" +%Y-%m-%d)" && yesterdayscore=0
+    yesterdayscorelist=($(cat $workdir/jifeninfo.log2 | grep -oE "createTime\":\"$yesterday[^}]*" | grep -oE "books_number\":[0-9]+" | grep -oE "[0-9]+" | tr "\n" " "))
+    for ((i = 0; i < ${#yesterdayscorelist[*]}; i++)); do yesterdayscore=$((yesterdayscore+yesterdayscorelist[i])); done
+    # info
+    echo $(echo ${username:0:2}******${username:8}) 总积分:$total 本月将过期积分:$invalid 可用积分:$canUse 奖励积分:$availablescore 本月将过期奖励积分:$invalidscore 本月新增奖励积分:$addScore 昨日奖励积分:$yesterdayscore 今日奖励积分:$todayscore
+}
+
+function otherinfo() {
+    # 需传入参数 otherinfo
+    echo ${all_parameter[*]} | grep -qE "otherinfo" || return 0
+    echo; echo starting otherinfo...
+    echo $(echo ${username:0:2}******${username:8}) >$workdir/otherinfo.info
+    # 套餐
+    curl -X POST -sA "$UA" -b $workdir/cookie --data "mobile=$username" https://m.client.10010.com/mobileservicequery/operationservice/queryOcsPackageFlowLeftContent >$workdir/otherinfo.log
+    addUpItemName=($(cat $workdir/otherinfo.log | grep -oE "addUpItemName\":\"[^\"]*" | cut -f3 -d\" | tr "\n" " "))
+    endDate=($(cat $workdir/otherinfo.log | grep -oE "endDate\":\"[^\"]*" | cut -f3 -d\" | tr "\n" " "))
+    remain=($(cat $workdir/otherinfo.log | grep -oE "remain\":\"[^\"]*" | cut -f3 -d\" | tr "\n" " "))
+    for ((i = 0; i < ${#addUpItemName[*]}; i++)); do echo ${addUpItemName[i]}-${endDate[i]}-${remain[i]} >>$workdir/otherinfo.info; done
+    # 话费
+    curl -X POST -sLA "$UA" -b $workdir/cookie --data "channel=client" https://m.client.10010.com/mobileservicequery/balancenew/accountBalancenew.htm >$workdir/otherinfo.log
+    curntbalancecust=$(cat $workdir/otherinfo.log | grep -oE "curntbalancecust\":\"-?[0-9]+\.[0-9]+" | cut -f3 -d\")
+    realfeecust=$(cat $workdir/otherinfo.log | grep -oE "realfeecust\":\"-?[0-9]+\.[0-9]+" | cut -f3 -d\")
+    echo 可用余额:$curntbalancecust 实时话费:$realfeecust >>$workdir/otherinfo.info
+    #
+    cat $workdir/otherinfo.info
 }
 
 function main() {
     # 签到任务
-    for ((u = 0; u < ${#all_username_password[*]}; u++)); do
+    for ((u = 0; u < ${#all_username_password[*]}; u++)); do 
         sleep $(shuf -i 1-10 -n 1)
         username=${all_username_password[u]%@*} && password=${all_username_password[u]#*@}
-        workdir="$(pwd)/CnUnicom_${username}" && [[ ! -d "$workdir" ]] && mkdir $workdir
-        userlogin && userlogin_ook[u]=$(echo ${username:0:2}****${username:9}) || { userlogin_err[u]=$(echo ${username:0:2}****${username:9}); continue; }
+        workdir="${workdirbase}_${username}" && [[ ! -d "$workdir" ]] && mkdir $workdir
+        userlogin && userlogin_ook[u]=$(echo ${username:0:2}******${username:8}) || { userlogin_err[u]=$(echo ${username:0:2}******${username:8}); continue; }
         membercenter
         liulactive
-        niujieactive
+        hfgoactive
+        jifeninfo
+        otherinfo
+        tgbotinfo
         #rm -rf $workdir
     done
-    echo; echo $(date) ${userlogin_err[*]} ${#userlogin_err[*]} 签到失败. ${userlogin_ook[*]} ${#userlogin_ook[*]} 签到完成.
-    # TG通知
-    tgbotinfo
+    echo; echo $(date) ${userlogin_err[*]} ${#userlogin_err[*]} Failed. ${userlogin_ook[*]} ${#userlogin_ook[*]} Accomplished.
 }
 
 main
